@@ -16,13 +16,45 @@ from telegram.constants import ParseMode, ChatAction
 from telegram.error import TelegramError, RetryAfter, Forbidden
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler, ChatJoinRequestHandler, ChatMemberHandler
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-try: ADMIN_ID = int(os.getenv("ADMIN_ID", "0").strip())
-except ValueError: ADMIN_ID = 0
-try: OWNER_ID = int(os.getenv("OWNER_ID", str(ADMIN_ID)).strip())
-except ValueError: OWNER_ID = ADMIN_ID
-DB_PATH = os.getenv("DB_PATH", "bot2.db").strip() or "bot2.db"
-BACKUP_DIR = Path(os.getenv("BACKUP_DIR", "backups")); BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+# ══════════════════════════════════════════════════════════════
+#  YAHAN APNA DETAIL BHARO (quotes ke andar)
+#  Env variable set ho to wahi pehle use hoga, warna ye values.
+# ══════════════════════════════════════════════════════════════
+CONFIG_BOT_TOKEN = "YAHAN_BOT_TOKEN_DALO"          # example: 123456:AA...
+CONFIG_ADMIN_ID  = "YAHAN_ADMIN_ID_DALO"            # example: 123456789
+CONFIG_OWNER_ID  = "YAHAN_OWNER_ID_DALO"            # example: 123456789  (khali = ADMIN_ID)
+# ══════════════════════════════════════════════════════════════
+
+def _cfg_str(env_key, config_val):
+    v = (os.getenv(env_key) or "").strip()
+    if v:
+        return v
+    v = str(config_val or "").strip()
+    if v.startswith("YAHAN_") or v in ("", "0", "None"):
+        return ""
+    return v
+
+def _cfg_int(env_key, config_val):
+    raw = _cfg_str(env_key, config_val)
+    try:
+        return int(raw) if raw else 0
+    except ValueError:
+        return 0
+
+BOT_TOKEN = _cfg_str("BOT_TOKEN", CONFIG_BOT_TOKEN)
+ADMIN_ID = _cfg_int("ADMIN_ID", CONFIG_ADMIN_ID)
+OWNER_ID = _cfg_int("OWNER_ID", CONFIG_OWNER_ID) or ADMIN_ID
+
+# Railway-safe absolute paths
+_DB_RAW = (os.getenv("DB_PATH") or "bot2.db").strip() or "bot2.db"
+DB_PATH = str(Path(_DB_RAW).expanduser().resolve())
+_BACKUP_RAW = (os.getenv("BACKUP_DIR") or "backups").strip() or "backups"
+BACKUP_DIR = Path(_BACKUP_RAW).expanduser()
+try:
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    BACKUP_DIR = Path("backups")
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 BOT_VERSION, DB_VERSION = "4.4.0", 8
 STARTED_AT = time.monotonic()
 LAST_ERROR = ""
@@ -1143,13 +1175,23 @@ def dash():
     now=datetime.now();today=now.date().isoformat();week=(now-timedelta(days=now.weekday())).date().isoformat()
     nt=scalar("SELECT COUNT(*) FROM users WHERE substr(joined_at,1,10)=?",(today,),0);nw=scalar("SELECT COUNT(*) FROM users WHERE substr(joined_at,1,10)>=?",(week,),0)
     up=int(time.monotonic()-STARTED_AT);sz=Path(DB_PATH).stat().st_size if Path(DB_PATH).exists() else 0
-    return ("╔═━━━✦ 🤖 <b>ADVANCED ADMIN DASHBOARD</b> ✦━━━═╗\n\n"
-            f"👥 Total Users: <b>{scalar('SELECT COUNT(*) FROM users')}</b>\n🆕 New Today: <b>{nt}</b>\n📅 New This Week: <b>{nw}</b>\n"
-            f"📢 Total Channels: <b>{len(channels(True))}</b>\n📨 Active Join Requests: <b>{scalar('SELECT COUNT(*) FROM join_requests WHERE status=\'active\'')}</b>\n"
-            f"📣 Broadcasts: <b>{scalar('SELECT COUNT(*) FROM broadcasts')}</b> | Sent <b>{scalar('SELECT COALESCE(SUM(sent),0) FROM broadcasts')}</b> | Failed <b>{scalar('SELECT COALESCE(SUM(failed),0) FROM broadcasts')}</b>\n"
-            f"⏱ Uptime: <b>{up//86400}d {(up%86400)//3600}h {(up%3600)//60}m</b>\n💾 DB Size: <b>{sz/1024:.1f} KB</b>\n"
-            f"🗄 Last Backup: <b>{esc(gset('last_backup','—'))}</b>\n♻️ Last Restore: <b>{esc(gset('last_restore','—'))}</b>\n🟢 Bot Status: <b>ONLINE</b>\n"
-            f"🧩 Version: <code>{BOT_VERSION}</code>\n╚═━━━━━━━━━━━━━━━━━━━━━━━━═╝")
+    total_users=scalar("SELECT COUNT(*) FROM users")
+    active_reqs=scalar("SELECT COUNT(*) FROM join_requests WHERE status='active'")
+    bcast_total=scalar("SELECT COUNT(*) FROM broadcasts")
+    bcast_sent=scalar("SELECT COALESCE(SUM(sent),0) FROM broadcasts")
+    bcast_failed=scalar("SELECT COALESCE(SUM(failed),0) FROM broadcasts")
+    last_backup=esc(gset("last_backup","—"))
+    last_restore=esc(gset("last_restore","—"))
+    nchan=len(channels(True))
+    return (
+        "╔═━━━✦ 🤖 <b>ADVANCED ADMIN DASHBOARD</b> ✦━━━═╗\n\n"
+        f"👥 Total Users: <b>{total_users}</b>\n🆕 New Today: <b>{nt}</b>\n📅 New This Week: <b>{nw}</b>\n"
+        f"📢 Total Channels: <b>{nchan}</b>\n📨 Active Join Requests: <b>{active_reqs}</b>\n"
+        f"📣 Broadcasts: <b>{bcast_total}</b> | Sent <b>{bcast_sent}</b> | Failed <b>{bcast_failed}</b>\n"
+        f"⏱ Uptime: <b>{up//86400}d {(up%86400)//3600}h {(up%3600)//60}m</b>\n💾 DB Size: <b>{sz/1024:.1f} KB</b>\n"
+        f"🗄 Last Backup: <b>{last_backup}</b>\n♻️ Last Restore: <b>{last_restore}</b>\n🟢 Bot Status: <b>ONLINE</b>\n"
+        f"🧩 Version: <code>{BOT_VERSION}</code>\n╚═━━━━━━━━━━━━━━━━━━━━━━━━═╝"
+    )
 
 def admin_kb():
     items=[]
@@ -2296,13 +2338,26 @@ class RenderHealthHandler(BaseHTTPRequestHandler):
         return
 
 def start_render_health_server():
+    """Railway/Render Web Service needs a listener on $PORT."""
     global HTTP_SERVER, HTTP_SERVER_THREAD
-    port=int(os.getenv("PORT","10000"))
-    HTTP_SERVER=ThreadingHTTPServer(("0.0.0.0",port),RenderHealthHandler)
-    HTTP_SERVER.daemon_threads=True
-    HTTP_SERVER_THREAD=threading.Thread(target=HTTP_SERVER.serve_forever,name="render-health",daemon=True)
+    base = int(os.getenv("PORT", "10000") or "10000")
+    server = None
+    bound = None
+    for port in (base, base + 1, base + 2, 0):
+        try:
+            server = ThreadingHTTPServer(("0.0.0.0", port), RenderHealthHandler)
+            bound = server.server_address[1]
+            break
+        except OSError as e:
+            logger.warning("Health port %s unavailable (%s) — trying next", port, e)
+    if server is None:
+        logger.warning("Health server skipped — polling bot can still run.")
+        return
+    HTTP_SERVER = server
+    HTTP_SERVER.daemon_threads = True
+    HTTP_SERVER_THREAD = threading.Thread(target=HTTP_SERVER.serve_forever, name="render-health", daemon=True)
     HTTP_SERVER_THREAD.start()
-    logger.info("Render health server listening on 0.0.0.0:%s",port)
+    logger.info("Health server listening on 0.0.0.0:%s", bound)
 
 def stop_render_health_server():
     global HTTP_SERVER
